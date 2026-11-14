@@ -24,8 +24,9 @@ def distance_to_lane(point,shape,width):
     return min(distances) if distances else math.inf
 
 
-def generate_scene(directory):
-    root=ET.parse(SUMO_TOWN04_NETWORK_FILE).getroot()
+def generate_scene(directory, network_file=None, rsu=None, map_name='Town04'):
+    custom = network_file is not None
+    root=ET.parse(network_file or SUMO_TOWN04_NETWORK_FILE).getroot()
     offset_x,offset_y=map(float,root.find('location').get('netOffset').split(','))
     lanes=[];all_points=[];highway=[]
     for edge in root.findall('edge'):
@@ -46,11 +47,14 @@ def generate_scene(directory):
     x_shift,y_shift=60.-min_x,60.-min_y
     for lane in lanes:lane['points']=[[x+x_shift,y+y_shift] for x,y in lane['points']]
     parameters=json.loads(EXPERIMENT_DEFAULT_CONFIGURATION_FILE.read_text())
-    rsu=parameters['rsu'];ranges=communication_ranges()
-    clearance,lane_id=min((distance_to_lane((rsu['x'],rsu['y']),shape,width),name) for name,shape,width in highway)
-    if ranges['rsu_metres']>=clearance:
-        raise ValueError(f'RSU radius {ranges["rsu_metres"]}m reaches highway lane {lane_id} at {clearance:.3f}m.')
-    scene=dict(map='Town04',coordinate_offset_x=x_shift,coordinate_offset_y=y_shift,
+    rsu=rsu or parameters['rsu'];ranges=communication_ranges()
+    if custom:
+        clearance,lane_id=0.,None
+    else:
+        clearance,lane_id=min((distance_to_lane((rsu['x'],rsu['y']),shape,width),name) for name,shape,width in highway)
+        if ranges['rsu_metres']>=clearance:
+            raise ValueError(f'RSU radius {ranges["rsu_metres"]}m reaches highway lane {lane_id} at {clearance:.3f}m.')
+    scene=dict(map=map_name,coordinate_offset_x=x_shift,coordinate_offset_y=y_shift,
         width=max_x-min_x+120.,height=max_y-min_y+120.,lanes=lanes,
         rsu=rsu,communication_ranges=ranges,
         coordinate_convention='Canvas X=CARLA X+offset; canvas Y=CARLA Y+offset (downwards). SUMO Y is inverted once.',

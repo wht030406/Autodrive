@@ -14,6 +14,7 @@ import time
 import carla
 from modules.lincoln.driving.junction_local_controller import JunctionLocalController, junction_spans
 from modules.lincoln.driving.controller import ROAD_SPEED_LIMIT_FACTOR
+from vanet.v2i_glosa.advice import read_speed_advice
 
 ROUTE_SPACING = 4.0
 MAX_SEARCH_NODES = 60000
@@ -596,6 +597,10 @@ class LincolnNavigation:
         if self.stopping is not None:
             return self.update_stopping(speed, distance, matching_lane)
         speed_limit = self.planned_speed(index, remaining, speed)
+        advice_file = getattr(getattr(self.node, 'args', None), 'v2i_advice_file', None)
+        advice_limit = read_speed_advice(advice_file, self.node.car.id)
+        if advice_limit is not None:
+            speed_limit = min(speed_limit, advice_limit)
         try:
             control = self.update_junction_control(snapshot, transform, current, index, speed_limit)
             if control is None:

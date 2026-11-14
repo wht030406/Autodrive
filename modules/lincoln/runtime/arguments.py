@@ -26,6 +26,7 @@ def parse_lincoln_arguments():
     parser.add_argument('--camera-rows', type=int, choices=[4, 6], default=4)
     parser.add_argument('--no-rviz', action='store_true')
     parser.add_argument('--rviz-config', type=Path, default=RVIZ_TEMPLATE_FILE)
+    parser.add_argument('--v2i-advice-file', type=Path, help='仅通信实验车读取有效无线消息生成的限速文件')
     parser.add_argument('--headless', action='store_true', help='不显示驾驶面板；不等于关闭传感器或 RViz')
     parser.add_argument('--duration', type=float, default=0, help='运行现实秒数后退出；0 为持续运行')
     parser.add_argument('--autopilot', action='store_true', help='生成后立即开启选定驾驶算法；默认手动驾驶')

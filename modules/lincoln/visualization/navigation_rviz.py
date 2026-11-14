@@ -11,7 +11,8 @@ import threading
 import time
 
 from rclpy.qos import QoSProfile, DurabilityPolicy
-from visualization_msgs.msg import MarkerArray
+from visualization_msgs.msg import Marker, MarkerArray
+from vanet.v2i_glosa.advice import read_display_status
 
 from modules.lincoln.runtime.paths import NAV_RVIZ_TEMPLATE_FILE
 from modules.lincoln.visualization.navigation_route import clear_route_markers, navigation_route_markers, tm_path_markers
@@ -51,7 +52,29 @@ class NavigationRviz:
     def publish_vehicle(self):
         """原封不动复用正在发布的车身与四轮，排除传感器安装点。"""
         if self.has_vehicle_subscribers():
-            self.vehicle_pub.publish(MarkerArray(markers=[self.node.model, *self.node.wheel_markers]))
+            markers=[self.node.model, *self.node.wheel_markers]
+            if getattr(getattr(self.node, 'args', None), 'v2i_advice_file', None):
+                status=read_display_status(self.node.args.v2i_advice_file,self.node.car.id)
+                marker=Marker()
+                marker.header.frame_id=self.node.frame()
+                marker.ns='v2i_radio_status'
+                marker.id=0
+                marker.type=Marker.TEXT_VIEW_FACING
+                marker.action=Marker.ADD
+                marker.frame_locked=True
+                marker.pose.position.z=3.1
+                marker.pose.orientation.w=1.
+                marker.scale.z=.6
+                marker.color.r=1.
+                marker.color.g=.85
+                marker.color.b=.2
+                marker.color.a=1.
+                marker.text=('V2I: no fresh SPaT packet' if not status or status.get('packet_sequence') is None
+                             else (f"V2I SPaT #{status['packet_sequence']} | advice {status['wireless_speed_kmh']:.1f} km/h"
+                                   if status.get('wireless_speed_kmh') is not None
+                                   else f"V2I SPaT #{status['packet_sequence']} | no speed change"))
+                markers.append(marker)
+            self.vehicle_pub.publish(MarkerArray(markers=markers))
 
     def show_route(self, waypoints, road_map):
         """驾驶线程只提交任务，不生成地图网格或等待 RViz 启动。"""

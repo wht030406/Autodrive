@@ -103,7 +103,8 @@ class BridgeRuntime:
 
     def step(self):
         self.npc.synchronize(self.carla, self.sumo)
-        self.traffic_lights.synchronize(self.carla, self.sumo)
+        if not getattr(self.args, 'v2i_external_lights', False):
+            self.traffic_lights.synchronize(self.carla, self.sumo)
         self.lincoln.prepare_traffic_managers(self.carla)
         for name in ('CARLA', 'SUMO'):
             if name == 'SUMO':
@@ -267,6 +268,7 @@ def main():
     parser.add_argument('--steps', type=int, default=DEFAULT_STEPS)
     parser.add_argument('--fast', action='store_true', default=DEFAULT_FAST)
     parser.add_argument('--vanet', action='store_true', help='启用紧急通行网络实验及逐帧屏障')
+    parser.add_argument('--v2i-external-lights', action='store_true', help='三灯实验由独立入口同步 CARLA 灯色')
     parser.add_argument('--control-socket', type=Path, default=SOCKET_FILE)
     args = parser.parse_args()
     if (not 1 <= args.port <= 65535 or args.steps < 0

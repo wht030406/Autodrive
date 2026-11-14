@@ -18,10 +18,10 @@ from vanet.omnet.build_and_launch.build_network import build_network
 from vanet.omnet.map_and_communication_display.scene_configuration import generate_scene
 
 
-def generate_configuration(directory, socket_path, seed=None):
+def generate_configuration(directory, socket_path, seed=None, network_file=None, rsu=None, map_name="Town04"):
     directory.mkdir(parents=True, exist_ok=True)
     parameters = json.loads(OMNET_RADIO_PARAMETERS_FILE.read_text())
-    scene,scene_path=generate_scene(directory)
+    scene,scene_path=generate_scene(directory, network_file=network_file, rsu=rsu, map_name=map_name)
     if seed is not None:
         parameters['seed'] = seed
     model = directory / 'radio_models.xml'
@@ -86,6 +86,9 @@ def main():
     parser.add_argument('--socket', type=Path, default=OMNET_COBRIDGE_COMMUNICATION_SOCKET_FILE)
     parser.add_argument('--results', type=Path)
     parser.add_argument('--seed', type=int)
+    parser.add_argument('--network-file', type=Path, help='专用 SUMO 路网，用于网络场景坐标')
+    parser.add_argument('--rsu-pose', type=float, nargs=3, metavar=('X','Y','Z'))
+    parser.add_argument('--map-name', default='Town04')
     parser.add_argument('--build-only', action='store_true')
     parser.add_argument('--ui',choices=('Qtenv','Cmdenv'),default='Qtenv')
     args = parser.parse_args()
@@ -104,7 +107,9 @@ def main():
         except BlockingIOError:
             raise RuntimeError(f'OMNeT++ already owns {args.socket}')
         args.socket.unlink(missing_ok=True)
-        configuration = generate_configuration(directory, args.socket, args.seed)
+        rsu = dict(id='rsu0', x=args.rsu_pose[0], y=args.rsu_pose[1], z=args.rsu_pose[2]) if args.rsu_pose else None
+        configuration = generate_configuration(directory, args.socket, args.seed,
+                                               network_file=args.network_file, rsu=rsu, map_name=args.map_name)
         command = [str(OMNET_EXECUTABLE_FILE), '-u', args.ui,
                    '-n', os.pathsep.join(map(str, (OMNET_NETWORK_DEFINITIONS_DIRECTORY, VEINS_NED_DIRECTORY))),
                    '-l', str(VEINS_WIRELESS_LIBRARY_FILE), '-l', str(library), '-f', str(configuration)]
