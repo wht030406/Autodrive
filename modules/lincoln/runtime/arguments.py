@@ -16,6 +16,7 @@ def parse_lincoln_arguments():
     parser.add_argument('--host', default=DEFAULT_HOST)
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
     parser.add_argument('--tm-port', type=int, default=DEFAULT_TM_PORT, help='Traffic Manager 首选端口；被占用时从此端口起查找空闲端口')
+    parser.add_argument('--tm-seed', type=int, help='可选的 Traffic Manager 随机种子；实验复现用')
     parser.add_argument('--timeout', type=float, default=DEFAULT_TIMEOUT)
     position = parser.add_mutually_exclusive_group()
     position.add_argument('--pose', type=float, nargs=4, metavar=('X', 'Y', 'Z', 'YAW'), help='CARLA 世界坐标（米）与 yaw（度）；保留 z，不自动吸附道路')

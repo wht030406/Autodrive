@@ -2,10 +2,11 @@
 import json
 from pathlib import Path
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 from vanet.v2i_glosa.advice import read_display_status, read_speed_advice
-from vanet.v2i_glosa.glosa import phase_at, red_safety_cap, speed_advice
+from vanet.v2i_glosa.glosa import horizontal_speed_kmh, phase_at, red_safety_cap, speed_advice
 
 
 class AdviceTests(unittest.TestCase):
@@ -28,6 +29,10 @@ class AdviceTests(unittest.TestCase):
             self.assertIsNone(read_speed_advice(path,5,now=101.))
             self.assertIsNone(read_speed_advice(path,4,now=103.))
             self.assertEqual(read_display_status(path,4,now=101.)['packet_sequence'],3)
+
+    def test_vertical_spawn_motion_is_not_driving_speed(self):
+        self.assertEqual(horizontal_speed_kmh(SimpleNamespace(x=0.,y=0.,z=5.)),0.)
+        self.assertAlmostEqual(horizontal_speed_kmh(SimpleNamespace(x=3.,y=4.,z=5.)),18.)
 
     def test_phase_boundary(self):
         self.assertEqual(phase_at(0,10.,11.),(1,2.))

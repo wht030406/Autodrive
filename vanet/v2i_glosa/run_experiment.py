@@ -4,7 +4,6 @@ import csv
 from contextlib import closing
 from datetime import datetime
 import json
-import math
 import os
 from pathlib import Path
 import signal
@@ -15,7 +14,7 @@ import time
 import carla
 from foundation.cobridge.control import ControlClient
 from foundation.sumo.client import SumoClient
-from vanet.v2i_glosa.glosa import STOP_LINES, red_safety_cap, speed_advice
+from vanet.v2i_glosa.glosa import STOP_LINES, horizontal_speed_kmh, red_safety_cap, speed_advice
 from vanet.v2i_glosa.radio import V2IRadio
 
 ROOT=Path(__file__).resolve().parents[2]
@@ -112,7 +111,8 @@ def sync_lights(world,states):
 def vehicle_sample(actor):
     location=actor.get_location()
     velocity=actor.get_velocity()
-    return location.x,math.sqrt(velocity.x**2+velocity.y**2+velocity.z**2)*3.6
+    return (location.x,location.y,location.z,
+            horizontal_speed_kmh(velocity),abs(velocity.z)*3.6)
 
 
 def write_chart(rows,output):
@@ -180,7 +180,8 @@ def run_round(output,assignment,seed,gui=False,rviz=False,npc_count=0,timeout_si
         world=client.generate_opendrive_world(XODR.read_text())
         if len(world.get_actors().filter('traffic.traffic_light*'))!=3:
             raise RuntimeError('CARLA map does not have three lights')
-        processes['sumo']=launch('sumo',[PYTHON,'foundation/sumo/init/sumo_init.py',CONFIG]
+        processes['sumo']=launch('sumo',[PYTHON,'foundation/sumo/init/sumo_init.py',CONFIG,
+                                          '--seed',str(seed)]
                                  +([] if gui else ['--headless']),output,env)
         def sumo_ready():
             with closing(SumoClient(timeout=2)) as probe:return probe.status()
@@ -197,7 +198,7 @@ def run_round(output,assignment,seed,gui=False,rviz=False,npc_count=0,timeout_si
         advice_paths=[output/'comm_advice.json',output/'baseline_safety.json']
         for n,(lane,path) in enumerate(((comm_lane,advice_paths[0]),(baseline_lane,advice_paths[1]))):
             args=[PYTHON,'modules/lincoln/add_lincoln.py','--pose','18',str(ys[lane]),'1.2','0',
-                  '--sensors','none','--headless','--v2i-advice-file',path]
+                  '--sensors','none','--headless','--tm-seed',str(seed),'--v2i-advice-file',path]
             if n==1 or not rviz:args.append('--no-rviz')
             processes[f'lincoln{n}']=launch(f'lincoln{n}',args,output,env)
             wait_until(lambda:len(world.get_actors().filter('vehicle.lincoln.mkz_2020'))>=n+1,processes,seconds=45)
@@ -208,14 +209,24 @@ def run_round(output,assignment,seed,gui=False,rviz=False,npc_count=0,timeout_si
             records={r['sumo_id']:r for r in status}
             assert set(records)=={'lincoln0','lincoln1'},records
             actors={name:world.get_actor(records[name]['actor_id']) for name in records}
-            reset_signal_phases(sumo)
-            for name,lane in (('lincoln0',comm_lane),('lincoln1',baseline_lane)):
-                record=records[name]
-                bridge.command('lincoln.navigate',sumo_id=name,
-                               owner_key=f"lincoln:{record['world_id']}:{record['actor_id']}",
-                               network_file=str(NET.resolve()),x=260.,y=-ys[lane])
+            stable_since=[None]
+            def both_settled():
+                t=float(sumo.connection.simulation.getTime())
+                readings=[vehicle_sample(actor) for actor in actors.values()]
+                if all(horizontal<.5 and vertical<.5 for _,_,_,horizontal,vertical in readings):
+                    if stable_since[0] is None:stable_since[0]=t
+                    return t-stable_since[0]>=.5
+                stable_since[0]=None
+                return False
+            wait_until(both_settled,processes,seconds=35)
+            for name,actor in actors.items():
+                x,y,_,horizontal,vertical=vehicle_sample(actor)
+                if abs(x-18.)>.5 or abs(y-ys[comm_lane if name=='lincoln0' else baseline_lane])>.5 or horizontal>=.5 or vertical>=.5:
+                    raise RuntimeError(f'{name} not settled at its start pose')
             metrics={name:dict(last_speed=None,last_x=18.,stopped=False,last_stop_x=-1e6,stops=0,waiting_s=0.,hard_brakes=0,hard_history=[],last_hard_at=-1e6,
-                               crossings=[None]*3,started=None,finished=None,arrived=False,red_violations=0,collisions=0)
+                               crossings=[None]*3,started=None,finished=None,arrived=False,red_violations=0,collisions=0,
+                               first_sample_time=None,initial_x=None,initial_y=None,initial_speed_kmh=None,initial_vertical_kmh=None,
+                               start_states=None,max_lateral_error_m=0.)
                      for name in records}
             if npc_count:
                 processes['npc']=launch('npc',[PYTHON,'modules/npcvehicules/npcvehicules.py',
@@ -230,6 +241,28 @@ def run_round(output,assignment,seed,gui=False,rviz=False,npc_count=0,timeout_si
             world.freeze_all_traffic_lights(True)
             try:
                 with V2IRadio(output/'radio',NET,seed=seed) as radio:
+                    # Hold both cars while their independent route workers plan.
+                    for name,path in (('lincoln0',advice_paths[0]),('lincoln1',advice_paths[1])):
+                        advice_write(path,actors[name].id,0.)
+                    for name,lane in (('lincoln0',comm_lane),('lincoln1',baseline_lane)):
+                        record=records[name]
+                        bridge.command('lincoln.navigate',sumo_id=name,
+                                       owner_key=f"lincoln:{record['world_id']}:{record['actor_id']}",
+                                       network_file=str(NET.resolve()),x=260.,y=-ys[lane])
+                    def both_ready():
+                        for name,path in (('lincoln0',advice_paths[0]),('lincoln1',advice_paths[1])):
+                            advice_write(path,actors[name].id,0.)
+                        statuses={r['sumo_id']:r.get('navigation',{}).get('state')
+                                  for r in bridge.command('status')['lincolns']}
+                        return all(statuses.get(name)=='navigating' for name in actors)
+                    wait_until(both_ready,processes,seconds=45)
+                    for name,actor in actors.items():
+                        x,y,_,horizontal,vertical=vehicle_sample(actor)
+                        if abs(x-18.)>.5 or horizontal>=1. or vertical>=1.:
+                            raise RuntimeError(f'{name} moved while waiting for paired release')
+                    reset_signal_phases(sumo)
+                    phase_origin_time=float(sumo.connection.simulation.getTime())
+                    for path in advice_paths:path.unlink(missing_ok=True)
                     started=time.monotonic()
                     while True:
                         for label,(process,log) in processes.items():
@@ -241,10 +274,9 @@ def run_round(output,assignment,seed,gui=False,rviz=False,npc_count=0,timeout_si
                         poses={}
                         for name in ('lincoln0','lincoln1'):
                             actor=actors[name]
-                            x,speed=vehicle_sample(actor)
-                            poses[name]=(x,speed)
-                            nodes.append(dict(id=name,role='lincoln',x=x,
-                                              y=actor.get_location().y,z=.6))
+                            x,y,z,speed,vertical=vehicle_sample(actor)
+                            poses[name]=(x,y,z,speed,vertical)
+                            nodes.append(dict(id=name,role='lincoln',x=x,y=y,z=.6))
                         payload=None
                         if t-last_sent>=1.-1e-6:
                             sequence+=1;last_sent=t
@@ -257,7 +289,7 @@ def run_round(output,assignment,seed,gui=False,rviz=False,npc_count=0,timeout_si
                                 if latest_packet is None or message['sequence']>latest_packet['sequence']:
                                     latest_packet=message
                         for name,path in (('lincoln0',advice_paths[0]),('lincoln1',advice_paths[1])):
-                            x,speed=poses[name]
+                            x,y,z,speed,vertical=poses[name]
                             safety=red_safety_cap(states,x)
                             assist=(speed_advice(latest_packet,t,x,speed) if name=='lincoln0' else None)
                             cap=min(v for v in (safety,assist) if v is not None) if safety is not None or assist is not None else None
@@ -267,8 +299,15 @@ def run_round(output,assignment,seed,gui=False,rviz=False,npc_count=0,timeout_si
                                          age=t-packet['sumo_time'] if packet else None,
                                          wireless_speed=assist)
                             m=metrics[name]
+                            if m['first_sample_time'] is None:
+                                m.update(first_sample_time=t,initial_x=x,initial_y=y,
+                                         initial_speed_kmh=speed,initial_vertical_kmh=vertical)
+                            expected_y=ys[comm_lane if name=='lincoln0' else baseline_lane]
+                            m['max_lateral_error_m']=max(m['max_lateral_error_m'],abs(y-expected_y))
                             dt=0 if last_t is None else max(0.,min(.5,t-last_t))
-                            if speed>2. and m['started'] is None:m['started']=t
+                            if speed>2. and x>18.5 and m['started'] is None:
+                                m['started']=t
+                                m['start_states']=''.join(states)
                             if m['started'] is not None and m['finished'] is None:
                                 standing=speed<1. and x<STOP_LINES[-1]+5.
                                 if standing:m['waiting_s']+=dt
@@ -292,7 +331,8 @@ def run_round(output,assignment,seed,gui=False,rviz=False,npc_count=0,timeout_si
                             if x>=STOP_LINES[-1]+5. and m['finished'] is None:m['finished']=t
                             m['last_speed'],m['last_x']=speed,x
                             samples.append(dict(time=t,vehicle=name,group='V2I assisted' if name=='lincoln0' else 'A baseline',
-                                                x=x,speed_kmh=speed,states=''.join(states),safety_cap=safety,
+                                                x=x,y=y,z=z,speed_kmh=speed,vertical_kmh=vertical,
+                                                states=''.join(states),safety_cap=safety,
                                                 wireless_cap=assist,applied_cap=cap,packet_sequence=latest_packet['sequence'] if name=='lincoln0' and latest_packet else None))
                         last_t=t
                         states_by_name={r['sumo_id']:r.get('navigation',{}).get('state')
@@ -317,6 +357,11 @@ def run_round(output,assignment,seed,gui=False,rviz=False,npc_count=0,timeout_si
                                  lane=comm_lane if name=='lincoln0' else baseline_lane,
                                  stops=m['stops'],waiting_s=round(m['waiting_s'],2),
                                  travel_s=round(m['finished']-m['started'],2),hard_brakes=m['hard_brakes'],
+                                 phase_origin_time=phase_origin_time,first_sample_time=m['first_sample_time'],
+                                 initial_x=m['initial_x'],initial_y=m['initial_y'],
+                                 initial_speed_kmh=m['initial_speed_kmh'],initial_vertical_kmh=m['initial_vertical_kmh'],
+                                 start_time=m['started'],start_states=m['start_states'],
+                                 max_lateral_error_m=round(m['max_lateral_error_m'],3),
                                  red_violations=m['red_violations'],collisions=m['collisions'],arrived=m['arrived'],crossings=m['crossings'],
                                  **(wireless if name=='lincoln0' else dict(sent=0,received=0,delivery_rate=None,mean_delay_ms=None))))
             (output/'summary.json').write_text(json.dumps(rows,indent=2,ensure_ascii=False))

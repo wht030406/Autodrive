@@ -111,6 +111,8 @@ def run(args, stopped):
                        '--lateral-resolution', str(SUMO_LATERAL_RESOLUTION),
                        '--start', SUMO_START, '--quit-on-end', SUMO_QUIT_ON_END,
                        '--log', str(LOG_FILE), '--error-log', str(ERROR_LOG_FILE)]
+            if args.seed is not None:
+                command.extend(('--seed', str(args.seed)))
             with LAUNCH_LOG_FILE.open('w') as output:
                 process = subprocess.Popen(command, stdout=output, stderr=subprocess.STDOUT,
                                            stdin=subprocess.DEVNULL, start_new_session=True)
@@ -157,6 +159,7 @@ def main():
     parser.add_argument('config', nargs='?', type=Path, default=DEFAULT_CONFIG)
     parser.add_argument('--port', type=int, default=DEFAULT_PORT)
     parser.add_argument('--step-length', type=float, default=DEFAULT_STEP_LENGTH)
+    parser.add_argument('--seed', type=int, help='固定 SUMO 随机种子；默认保持 SUMO 原有设置')
     parser.add_argument('--headless', action='store_true', default=DEFAULT_HEADLESS)
     parser.add_argument('--control-socket', type=Path, default=SOCKET_FILE)
     args = parser.parse_args()

@@ -6,6 +6,11 @@ STOP_LINES = (62.8, 132.8, 202.8)
 NOMINAL_KMH = 50.0
 
 
+def horizontal_speed_kmh(velocity):
+    """Road progress excludes falling motion immediately after CARLA spawn."""
+    return math.hypot(velocity.x,velocity.y)*3.6
+
+
 def phase_at(phase, remaining, elapsed):
     phase=int(phase)
     remaining=float(remaining)-max(0.,elapsed)

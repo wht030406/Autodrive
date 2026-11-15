@@ -27,6 +27,8 @@ class CarlaAutopilotController(DrivingController):
             self.manager = self.client.get_trafficmanager(port)
             self.port = port
         self.refresh_clock_mode()
+        if getattr(self.args, 'tm_seed', None) is not None:
+            self.manager.set_random_device_seed(self.args.tm_seed)
         self.manager.vehicle_percentage_speed_difference(self.vehicle, DEFAULT_SPEED_DIFFERENCE)
         logging.info('TM 初始化完成：端口 %s，耗时 %.3f 秒', self.port, time.monotonic() - started)
         print(f'[Lincoln] Traffic Manager 已就绪，端口 {self.port}', flush=True)
